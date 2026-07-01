@@ -38,6 +38,8 @@ spec:
                 configMapKeyRef:
                   name: {{ include "booking.name" . }}-config
                   key: DB_NAME
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
