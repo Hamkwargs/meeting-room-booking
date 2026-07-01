@@ -27,7 +27,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "booking.name" . }}-secret
-                  key: DB_PASSWORD
+                  key: DB_USER
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -69,7 +69,8 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: {{ .Values.postgres.storageClassName }}
   resources:
     requests:
       storage: {{ .Values.postgres.storage }}
-  {{- end }}
+{{- end }}
