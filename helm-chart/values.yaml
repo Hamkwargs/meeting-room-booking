@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: hamkwargs/booking-backend
-  tag: "v2"
+  tag: "08308806279be149af46272a0e24cd65f3d8f336"
   pullPolicy: IfNotPresent
 
 service:
