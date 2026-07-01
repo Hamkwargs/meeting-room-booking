@@ -1,0 +1,30 @@
+replicaCount: 1
+
+image:
+  repository: hamkwargs/booking-backend
+  tag: "v1"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 3000
+
+ingress:
+  enabled: true
+  host: booking.local
+
+env:
+  PORT: "3000"
+  DB_HOST: "postgres-service"
+  DB_PORT: "5432"
+  DB_NAME: "booking_db"
+  DB_USER: "postgres"
+
+secret:
+  DB_PASSWORD: "postgres"
+  JWT_SECRET: "change-this-in-production"
+
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  storage: 1Gi

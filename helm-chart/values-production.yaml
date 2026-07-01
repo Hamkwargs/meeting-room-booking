@@ -1,0 +1,10 @@
+replicaCount: 2
+
+image:
+  tag: "v1"
+
+ingress:
+  host: booking.prod.local
+
+secret:
+  JWT_SECRET: "production-secret-change-me"
