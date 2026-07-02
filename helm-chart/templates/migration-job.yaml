@@ -24,15 +24,20 @@ spec:
             - configMapRef:
                 name: {{ include "booking.name" . }}-config
             - secretRef:
-            name: {{ include "booking.name" . }}-secret
+                name: {{ include "booking.name" . }}-secret
           command:
             - sh
             - -c
             - |
-            until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME"; do
-            echo "waiting for postgres..."
-            sleep 3
-            done
+              until pg_isready \
+                -h "$DB_HOST" \
+                -p "$DB_PORT" \
+                -U "$DB_USER" \
+                -d "$DB_NAME"; do
+                echo "waiting for postgres..."
+                sleep 3
+              done
+
       containers:
         - name: migrate
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -42,4 +47,4 @@ spec:
             - configMapRef:
                 name: {{ include "booking.name" . }}-config
             - secretRef:
-            name: {{ include "booking.name" . }}-secret
+                name: {{ include "booking.name" . }}-secret
