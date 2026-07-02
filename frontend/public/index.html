@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8" />
+    <title>Room Booking</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+        :root{
+            --bg:#F6F5F2;
+            --surface:#FFFFFF;
+            --ink:#15161B;
+            --muted:#93949D;
+            --line:#E7E4DE;
+            --accent:#4A56E8;
+            --danger:#E15252;
+            --phoenix:#FF6B52;
+            --phoenix-soft:#FFEDE8;
+            --falcon:#3B7DD8;
+            --falcon-soft:#EAF2FC;
+            --griffin:#9C7A3C;
+            --griffin-soft:#F5EEE0;
+            --ease-spring: cubic-bezier(.34,1.56,.64,1);
+            --ease-out: cubic-bezier(.16,1,.3,1);
+        }
+
+        *{box-sizing:border-box;}
+        html,body{margin:0;padding:0;}
+        body{
+            background:var(--bg);
+            color:var(--ink);
+            font-family:'Inter',sans-serif;
+            -webkit-font-smoothing:antialiased;
+            min-height:100vh;
+            padding:32px 24px 80px;
+        }
+
+        .app{ max-width:920px; margin:0 auto; }
+
+        .topbar{
+            display:flex;
+            align-items:flex-end;
+            justify-content:space-between;
+            margin-bottom:28px;
+            gap:16px;
+            flex-wrap:wrap;
+        }
+        .title-block h1{
+            font-family:'Space Grotesk',sans-serif;
+            font-size:28px;
+            font-weight:700;
+            letter-spacing:-0.01em;
+            margin:0 0 4px;
+        }
+        .title-block p{
+            margin:0;
+            font-size:13px;
+            color:var(--muted);
+        }
+        .day-nav{
+            display:flex;
+            align-items:center;
+            gap:10px;
+            background:var(--surface);
+            border:1px solid var(--line);
+            border-radius:10px;
+            padding:6px 8px;
+        }
+        .day-nav button{
+            width:28px;height:28px;
+            border:none;background:transparent;
+            border-radius:7px;
+            color:var(--ink);
+            font-size:15px;
+            cursor:pointer;
+            display:flex;align-items:center;justify-content:center;
+            transition:background .15s var(--ease-out);
+        }
+        .day-nav button:hover{ background:var(--bg); }
+        .day-nav button:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+        .day-nav span{
+            font-family:'IBM Plex Mono',monospace;
+            font-size:12.5px;
+            min-width:108px;
+            text-align:center;
+            color:var(--ink);
+        }
+
+        .legend{
+            display:flex;
+            gap:18px;
+            margin-bottom:18px;
+            flex-wrap:wrap;
+        }
+        .legend-item{
+            display:flex;align-items:center;gap:7px;
+            font-size:12px;
+            color:var(--muted);
+        }
+        .legend-dot{ width:8px;height:8px;border-radius:50%; }
+
+        .board{
+            background:var(--surface);
+            border:1px solid var(--line);
+            border-radius:16px;
+            overflow:hidden;
+            box-shadow:0 1px 2px rgba(20,20,20,.03);
+        }
+
+        .grid-scroll{ overflow-x:auto; }
+
+        .grid{
+            display:grid;
+            grid-template-columns:56px repeat(3,minmax(180px,1fr));
+            min-width:640px;
+            position:relative;
+        }
+
+        .headcell{
+            border-bottom:1px solid var(--line);
+            padding:14px 14px 12px;
+            position:sticky; top:0; background:var(--surface); z-index:3;
+        }
+        .headcell.time-col{ border-right:1px solid var(--line); }
+        .headcell.room{
+            border-left:1px solid var(--line);
+        }
+        .room-name{
+            font-family:'Space Grotesk',sans-serif;
+            font-weight:600;
+            font-size:14.5px;
+            display:flex; align-items:center; gap:7px;
+        }
+        .room-dot{ width:7px;height:7px;border-radius:50%; flex-shrink:0; }
+        .room-meta{
+            margin-top:3px;
+            font-size:11px;
+            color:var(--muted);
+            font-family:'IBM Plex Mono',monospace;
+        }
+        .room-tags{
+            margin-top:6px;
+            display:flex; gap:5px; flex-wrap:wrap;
+        }
+        .room-tags span{
+            font-size:10px;
+            color:var(--muted);
+            background:var(--bg);
+            border:1px solid var(--line);
+            padding:2px 6px;
+            border-radius:5px;
+        }
+
+        .time-col-body{
+            border-right:1px solid var(--line);
+            position:relative;
+        }
+        .hour-label{
+            position:absolute;
+            left:0; right:0;
+            transform:translateY(-6px);
+            font-family:'IBM Plex Mono',monospace;
+            font-size:10.5px;
+            color:var(--muted);
+            text-align:right;
+            padding-right:8px;
+        }
+
+        .track{
+            position:relative;
+            border-left:1px solid var(--line);
+            cursor:crosshair;
+            user-select:none;
+            -webkit-user-select:none;
+        }
+        .gridline{
+            position:absolute; left:0; right:0;
+            border-top:1px solid var(--line);
+        }
+        .gridline.half{ border-top-style:dashed; opacity:.55; }
+
+        .now-line{
+            position:absolute; left:0; right:0; height:0;
+            border-top:1.5px solid var(--danger);
+            z-index:5; pointer-events:none;
+        }
+        .now-line::before{
+            content:''; position:absolute; left:-4px; top:-4px;
+            width:8px;height:8px;border-radius:50%;
+            background:var(--danger);
+            animation:pulse 2s ease-out infinite;
+        }
+        @keyframes pulse{
+            0%{ box-shadow:0 0 0 0 rgba(225,82,82,.45); }
+            70%{ box-shadow:0 0 0 8px rgba(225,82,82,0); }
+            100%{ box-shadow:0 0 0 0 rgba(225,82,82,0); }
+        }
+
+        .block{
+            position:absolute;
+            left:4px; right:4px;
+            border-radius:10px;
+            padding:7px 9px 6px;
+            color:#fff;
+            overflow:hidden;
+            cursor:grab;
+            transition:box-shadow .18s var(--ease-out), transform .22s var(--ease-spring), left .22s var(--ease-spring), width .22s var(--ease-spring);
+            box-shadow:0 1px 2px rgba(20,20,20,.08);
+            animation:enter .5s var(--ease-out) backwards;
+        }
+        .block:active{ cursor:grabbing; }
+        .block.dragging{
+            transition:none;
+            box-shadow:0 10px 24px rgba(20,20,20,.18);
+            transform:scale(1.015);
+            z-index:20;
+            opacity:.96;
+        }
+        .block.rejected{ animation:shake .38s var(--ease-out); }
+        @keyframes shake{
+            0%,100%{ transform:translateX(0); }
+            20%{ transform:translateX(-4px); }
+            40%{ transform:translateX(4px); }
+            60%{ transform:translateX(-3px); }
+            80%{ transform:translateX(3px); }
+        }
+        @keyframes enter{
+            from{ opacity:0; transform:translateY(6px) scale(.98); }
+            to{ opacity:1; transform:translateY(0) scale(1); }
+        }
+        .block.exiting{
+            animation:exit .22s var(--ease-out) forwards;
+        }
+        @keyframes exit{
+            to{ opacity:0; transform:scale(.9); }
+        }
+
+        .block .b-title{
+            font-size:12.5px; font-weight:600;
+            line-height:1.25;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+        }
+        .block .b-time{
+            font-family:'IBM Plex Mono',monospace;
+            font-size:10.5px;
+            opacity:.88;
+            margin-top:1px;
+        }
+        .block .b-del{
+            position:absolute; top:5px; right:5px;
+            width:17px;height:17px;
+            border-radius:5px;
+            background:rgba(0,0,0,.18);
+            border:none; color:#fff;
+            font-size:10px; line-height:1;
+            cursor:pointer;
+            display:flex;align-items:center;justify-content:center;
+            opacity:0;
+            transition:opacity .15s var(--ease-out), background .15s;
+        }
+        .block:hover .b-del{ opacity:1; }
+        .block .b-del:hover{ background:rgba(0,0,0,.32); }
+
+        .handle{
+            position:absolute; left:0; right:0; height:9px;
+            cursor:ns-resize;
+            opacity:0;
+        }
+        .handle.top{ top:-2px; }
+        .handle.bottom{ bottom:-2px; }
+        .block:hover .handle{ opacity:1; }
+        .handle::after{
+            content:''; position:absolute; left:50%; top:50%;
+            width:22px; height:3px; border-radius:3px;
+            background:rgba(255,255,255,.85);
+            transform:translate(-50%,-50%);
+        }
+
+        .ghost{
+            position:absolute; left:4px; right:4px;
+            border-radius:10px;
+            border:1.5px dashed rgba(74,86,232,.55);
+            background:rgba(74,86,232,.08);
+            pointer-events:none;
+            z-index:15;
+        }
+        .ghost .g-badge{
+            position:absolute; bottom:6px; left:8px; right:8px;
+            font-family:'IBM Plex Mono',monospace;
+            font-size:11px;
+            color:var(--accent);
+            font-weight:500;
+        }
+        .ghost.at-max .g-badge{ color:var(--danger); }
+
+        .popover{
+            position:absolute;
+            z-index:30;
+            background:var(--ink);
+            border-radius:10px;
+            padding:9px;
+            box-shadow:0 12px 28px rgba(20,20,20,.28);
+            display:flex; gap:6px;
+            animation:pop-in .18s var(--ease-spring);
+            transform-origin:top left;
+        }
+        @keyframes pop-in{
+            from{ opacity:0; transform:scale(.92) translateY(-3px); }
+            to{ opacity:1; transform:scale(1) translateY(0); }
+        }
+        .popover input{
+            background:rgba(255,255,255,.1);
+            border:1px solid rgba(255,255,255,.18);
+            border-radius:6px;
+            color:#fff;
+            font-family:'Inter',sans-serif;
+            font-size:12.5px;
+            padding:6px 8px;
+            width:150px;
+            outline:none;
+        }
+        .popover input::placeholder{ color:rgba(255,255,255,.4); }
+        .popover input:focus{ border-color:var(--accent); }
+        .popover button{
+            background:var(--accent);
+            border:none; border-radius:6px;
+            color:#fff; font-size:12px; font-weight:500;
+            padding:0 12px;
+            cursor:pointer;
+            transition:filter .15s;
+        }
+        .popover button:hover{ filter:brightness(1.1); }
+
+        .toast-wrap{
+            position:fixed; left:50%; bottom:28px;
+            transform:translateX(-50%);
+            display:flex; flex-direction:column; gap:8px;
+            z-index:50; pointer-events:none;
+        }
+        .toast{
+            background:var(--ink);
+            color:#fff;
+            font-size:12.5px;
+            padding:9px 16px;
+            border-radius:20px;
+            box-shadow:0 8px 20px rgba(20,20,20,.25);
+            animation:toast-in .28s var(--ease-spring), toast-out .25s ease-in 1.9s forwards;
+            white-space:nowrap;
+        }
+        @keyframes toast-in{ from{ opacity:0; transform:translateY(8px) scale(.94); } to{ opacity:1; transform:translateY(0) scale(1); } }
+        @keyframes toast-out{ to{ opacity:0; transform:translateY(4px) scale(.96); } }
+
+        .hint{
+            margin-top:14px;
+            font-size:11.5px;
+            color:var(--muted);
+            display:flex; gap:16px; flex-wrap:wrap;
+        }
+        .hint span{ display:flex; align-items:center; gap:6px; }
+        .hint kbd{
+            font-family:'IBM Plex Mono',monospace;
+            background:var(--surface);
+            border:1px solid var(--line);
+            border-radius:5px;
+            padding:1px 6px;
+            font-size:10.5px;
+        }
+
+        @media (prefers-reduced-motion: reduce){
+            *{ animation-duration:.001s !important; transition-duration:.001s !important; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="app">
+    <div class="topbar">
+        <div class="title-block">
+            <h1>Room Booking</h1>
+            <p>ลากบนตารางเพื่อจองห้อง · ยืด/หดขอบเพื่อปรับเวลา · สูงสุด 2 ชั่วโมงต่อครั้ง</p>
+        </div>
+        <div class="day-nav">
+            <button id="prevDay" aria-label="วันก่อนหน้า">‹</button>
+            <span id="dayLabel"></span>
+            <button id="nextDay" aria-label="วันถัดไป">›</button>
+        </div>
+    </div>
+
+    <div class="legend" id="legend"></div>
+
+    <div class="board">
+        <div class="grid-scroll">
+            <div class="grid" id="grid"></div>
+        </div>
+    </div>
+
+    <div class="hint">
+        <span><kbd>ลาก</kbd> พื้นที่ว่างเพื่อสร้างการจอง</span>
+        <span><kbd>ลากขอบบน/ล่าง</kbd> ของบล็อกเพื่อยืด-หด</span>
+        <span><kbd>ลากตัวบล็อก</kbd> เพื่อย้ายเวลาหรือห้อง</span>
+    </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+    (function(){
+        const ROOMS = [
+            { key:'phoenix', name:'Phoenix', floor:'Floor 3', capacity:8, color:'var(--phoenix)', soft:'var(--phoenix-soft)', tags:['Projector','Whiteboard'] },
+            { key:'falcon',  name:'Falcon',  floor:'Floor 5', capacity:4, color:'var(--falcon)',  soft:'var(--falcon-soft)',  tags:['TV','Video Conference'] },
+            { key:'griffin', name:'Griffin', floor:'Floor 5', capacity:12,color:'var(--griffin)', soft:'var(--griffin-soft)', tags:['Projector','TV','Video Conference'] },
+        ];
+
+        const DAY_START = 8 * 60;   // minutes
+        const DAY_END   = 20 * 60;
+        const PX_PER_MIN = 1.2;     // 72px per hour
+        const SNAP = 15;
+        const MIN_DUR = 30;
+        const MAX_DUR = 120;
+        const GRID_H = (DAY_END - DAY_START) * PX_PER_MIN;
+
+        let idSeq = 1;
+        let bookings = [
+            { id: idSeq++, room:'phoenix', start: 9*60 - DAY_START,  duration: 60, title:'Weekly Sync' },
+            { id: idSeq++, room:'falcon',  start: 10*60+30 - DAY_START, duration: 45, title:'Client Call' },
+            { id: idSeq++, room:'griffin', start: 13*60 - DAY_START, duration: 90, title:'Sprint Planning' },
+            { id: idSeq++, room:'phoenix', start: 15*60 - DAY_START, duration: 30, title:'1:1' },
+        ];
+
+        let dayOffset = 0;
+        const baseDate = new Date();
+
+        const grid = document.getElementById('grid');
+        const legend = document.getElementById('legend');
+        const dayLabel = document.getElementById('dayLabel');
+        const toastWrap = document.getElementById('toastWrap');
+
+        function fmtTime(min){
+            const total = DAY_START + min;
+            const h = Math.floor(total/60), m = total%60;
+            return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+        }
+        function fmtDuration(min){
+            const h = Math.floor(min/60), m = min%60;
+            if (h && m) return h+' ชม. '+m+' น.';
+            if (h) return h+' ชม.';
+            return m+' น.';
+        }
+        function toast(msg){
+            const el = document.createElement('div');
+            el.className = 'toast';
+            el.textContent = msg;
+            toastWrap.appendChild(el);
+            setTimeout(()=> el.remove(), 2200);
+        }
+        function overlaps(room, start, duration, excludeId){
+            const end = start + duration;
+            return bookings.some(b => b.room===room && b.id!==excludeId &&
+                start < b.start + b.duration && end > b.start);
+        }
+        function snap(v){ return Math.round(v / SNAP) * SNAP; }
+        function clampDuration(d){ return Math.max(MIN_DUR, Math.min(MAX_DUR, d)); }
+
+        function renderLegend(){
+            legend.innerHTML = ROOMS.map(r =>
+                `<div class="legend-item"><span class="legend-dot" style="background:${r.color}"></span>${r.name} · ${r.floor}</div>`
+            ).join('');
+        }
+
+        function renderDayLabel(){
+            const d = new Date(baseDate);
+            d.setDate(d.getDate() + dayOffset);
+            const opts = { weekday:'short', day:'numeric', month:'short' };
+            dayLabel.textContent = d.toLocaleDateString('th-TH', opts);
+        }
+
+        function buildGrid(){
+            grid.innerHTML = '';
+
+            // top-left spacer
+            const spacer = document.createElement('div');
+            spacer.className = 'headcell time-col';
+            grid.appendChild(spacer);
+
+            ROOMS.forEach(r => {
+                const head = document.createElement('div');
+                head.className = 'headcell room';
+                head.innerHTML = `
+        <div class="room-name"><span class="room-dot" style="background:${r.color}"></span>${r.name}</div>
+        <div class="room-meta">${r.floor} · ${r.capacity} ที่นั่ง</div>
+        <div class="room-tags">${r.tags.map(t=>`<span>${t}</span>`).join('')}</div>`;
+                grid.appendChild(head);
+            });
+
+            // time column body
+            const timeCol = document.createElement('div');
+            timeCol.className = 'time-col-body';
+            timeCol.style.height = GRID_H + 'px';
+            for (let t = DAY_START; t <= DAY_END; t += 60){
+                const lbl = document.createElement('div');
+                lbl.className = 'hour-label';
+                lbl.style.top = ((t-DAY_START)*PX_PER_MIN) + 'px';
+                lbl.textContent = String(Math.floor(t/60)).padStart(2,'0')+':00';
+                timeCol.appendChild(lbl);
+            }
+            grid.appendChild(timeCol);
+
+            ROOMS.forEach(r => {
+                const track = document.createElement('div');
+                track.className = 'track';
+                track.style.height = GRID_H + 'px';
+                track.dataset.room = r.key;
+
+                for (let t = 0; t <= DAY_END-DAY_START; t += 30){
+                    const line = document.createElement('div');
+                    line.className = 'gridline' + (t % 60 !== 0 ? ' half' : '');
+                    line.style.top = (t*PX_PER_MIN) + 'px';
+                    track.appendChild(line);
+                }
+
+                // current time line
+                const now = new Date();
+                const nowMin = now.getHours()*60 + now.getMinutes() - DAY_START;
+                if (dayOffset === 0 && nowMin >= 0 && nowMin <= DAY_END-DAY_START){
+                    const nl = document.createElement('div');
+                    nl.className = 'now-line';
+                    nl.style.top = (nowMin*PX_PER_MIN) + 'px';
+                    track.appendChild(nl);
+                }
+
+                track.addEventListener('pointerdown', onTrackPointerDown);
+                grid.appendChild(track);
+            });
+
+            renderBookings();
+        }
+
+        function renderBookings(){
+            document.querySelectorAll('.block').forEach(b=>b.remove());
+            bookings.forEach((b, i) => {
+                const room = ROOMS.find(r=>r.key===b.room);
+                const track = grid.querySelector(`.track[data-room="${b.room}"]`);
+                const el = document.createElement('div');
+                el.className = 'block';
+                el.style.background = room.color;
+                el.style.top = (b.start*PX_PER_MIN) + 'px';
+                el.style.height = (b.duration*PX_PER_MIN) + 'px';
+                el.style.animationDelay = (i*45)+'ms';
+                el.dataset.id = b.id;
+                el.innerHTML = `
+        <button class="b-del" aria-label="ลบการจอง">✕</button>
+        <div class="b-title">${b.title}</div>
+        <div class="b-time">${fmtTime(b.start)}–${fmtTime(b.start+b.duration)} · ${fmtDuration(b.duration)}</div>
+        <div class="handle top"></div>
+        <div class="handle bottom"></div>`;
+                track.appendChild(el);
+
+                el.querySelector('.b-del').addEventListener('click', (e)=>{
+                    e.stopPropagation();
+                    el.classList.add('exiting');
+                    setTimeout(()=>{
+                        bookings = bookings.filter(x=>x.id!==b.id);
+                        renderBookings();
+                    }, 200);
+                });
+                el.querySelector('.handle.top').addEventListener('pointerdown', (e)=> startResize(e, b, 'top'));
+                el.querySelector('.handle.bottom').addEventListener('pointerdown', (e)=> startResize(e, b, 'bottom'));
+                el.addEventListener('pointerdown', (e)=>{
+                    if (e.target.closest('.handle') || e.target.closest('.b-del')) return;
+                    startMove(e, b, el);
+                });
+            });
+        }
+
+        // ---- create new booking by dragging on empty track ----
+        function onTrackPointerDown(e){
+            if (e.target !== e.currentTarget) return;
+            const track = e.currentTarget;
+            const room = track.dataset.room;
+            const rect = track.getBoundingClientRect();
+            const startY = snap((e.clientY - rect.top) / PX_PER_MIN);
+            const startClamped = Math.max(0, Math.min(DAY_END-DAY_START-MIN_DUR, startY));
+
+            const ghost = document.createElement('div');
+            ghost.className = 'ghost';
+            ghost.innerHTML = `<div class="g-badge"></div>`;
+            track.appendChild(ghost);
+
+            let curStart = startClamped, curDur = MIN_DUR;
+            const updateGhost = () => {
+                ghost.style.top = (curStart*PX_PER_MIN)+'px';
+                ghost.style.height = (curDur*PX_PER_MIN)+'px';
+                ghost.classList.toggle('at-max', curDur >= MAX_DUR);
+                ghost.querySelector('.g-badge').textContent = fmtTime(curStart)+'–'+fmtTime(curStart+curDur)+' · '+fmtDuration(curDur);
+            };
+            updateGhost();
+
+            function onMove(ev){
+                const y = snap((ev.clientY - rect.top) / PX_PER_MIN);
+                let dur = clampDuration(y - startClamped);
+                if (y < startClamped) dur = MIN_DUR;
+                curDur = dur;
+                updateGhost();
+            }
+            function onUp(ev){
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+
+                if (overlaps(room, curStart, curDur, null)){
+                    ghost.classList.add('rejected');
+                    toast('ช่วงเวลานี้ไม่ว่าง');
+                    setTimeout(()=> ghost.remove(), 380);
+                    return;
+                }
+                if (curDur >= MAX_DUR) toast('จองได้สูงสุด 2 ชั่วโมง');
+
+                openTitlePopover(ghost, ev.clientX, ev.clientY, (title)=>{
+                    ghost.remove();
+                    bookings.push({ id: idSeq++, room, start: curStart, duration: curDur, title: title || 'จองห้อง' });
+                    renderBookings();
+                }, ()=> ghost.remove());
+            }
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+        }
+
+        function openTitlePopover(anchorEl, x, y, onConfirm, onCancel){
+            const pop = document.createElement('div');
+            pop.className = 'popover';
+            pop.style.left = '4px';
+            pop.style.top = '4px';
+            pop.innerHTML = `<input type="text" placeholder="ชื่อการจอง…" maxlength="40" /><button>เพิ่ม</button>`;
+            anchorEl.appendChild(pop);
+            const input = pop.querySelector('input');
+            const btn = pop.querySelector('button');
+            input.focus();
+
+            let done = false;
+            function confirm(){
+                if (done) return; done = true;
+                onConfirm(input.value.trim());
+            }
+            function cancel(){
+                if (done) return; done = true;
+                onCancel();
+            }
+            btn.addEventListener('click', confirm);
+            input.addEventListener('keydown', (e)=>{
+                if (e.key === 'Enter') confirm();
+                if (e.key === 'Escape') cancel();
+            });
+            input.addEventListener('blur', ()=> setTimeout(()=>{ if(!done) confirm(); }, 120));
+        }
+
+        // ---- move existing booking ----
+        function startMove(e, b, el){
+            e.stopPropagation();
+            const startTrack = grid.querySelector(`.track[data-room="${b.room}"]`);
+            const rect = startTrack.getBoundingClientRect();
+            const grabOffsetY = e.clientY - rect.top - b.start*PX_PER_MIN;
+            const origStart = b.start, origRoom = b.room;
+            el.classList.add('dragging');
+            el.setPointerCapture(e.pointerId);
+
+            let curStart = origStart, curRoom = origRoom;
+
+            function trackAtX(x){
+                let best = null, bestD = Infinity;
+                ROOMS.forEach(r=>{
+                    const t = grid.querySelector(`.track[data-room="${r.key}"]`);
+                    const tr = t.getBoundingClientRect();
+                    const c = tr.left + tr.width/2;
+                    const d = Math.abs(x - c);
+                    if (x >= tr.left && x <= tr.right && d < bestD){ best = r.key; bestD = d; }
+                });
+                return best || origRoom;
+            }
+
+            function onMove(ev){
+                curRoom = trackAtX(ev.clientX);
+                const t = grid.querySelector(`.track[data-room="${curRoom}"]`);
+                const tr = t.getBoundingClientRect();
+                let y = snap((ev.clientY - tr.top - grabOffsetY) / PX_PER_MIN);
+                y = Math.max(0, Math.min(DAY_END-DAY_START-b.duration, y));
+                curStart = y;
+                if (el.parentElement !== t) t.appendChild(el);
+                el.style.top = (curStart*PX_PER_MIN)+'px';
+            }
+            function onUp(){
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                el.classList.remove('dragging');
+
+                if (overlaps(curRoom, curStart, b.duration, b.id)){
+                    el.classList.add('rejected');
+                    toast('ช่วงเวลานี้ไม่ว่าง');
+                    setTimeout(()=> renderBookings(), 380);
+                    return;
+                }
+                b.start = curStart; b.room = curRoom;
+                renderBookings();
+            }
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+        }
+
+        // ---- resize existing booking ----
+        function startResize(e, b, edge){
+            e.stopPropagation();
+            const track = grid.querySelector(`.track[data-room="${b.room}"]`);
+            const rect = track.getBoundingClientRect();
+            const el = e.target.closest('.block');
+            el.classList.add('dragging');
+            const origStart = b.start, origEnd = b.start + b.duration;
+            let curStart = origStart, curDur = b.duration;
+            let cappedNotified = false;
+
+            function onMove(ev){
+                const y = snap((ev.clientY - rect.top) / PX_PER_MIN);
+                if (edge === 'bottom'){
+                    let dur = clampDuration(y - origStart);
+                    dur = Math.min(dur, DAY_END-DAY_START-origStart);
+                    curDur = dur; curStart = origStart;
+                } else {
+                    let start = Math.max(0, Math.min(origEnd-MIN_DUR, y));
+                    let dur = clampDuration(origEnd - start);
+                    curStart = origEnd - dur;
+                    curDur = dur;
+                }
+                el.style.top = (curStart*PX_PER_MIN)+'px';
+                el.style.height = (curDur*PX_PER_MIN)+'px';
+                el.querySelector('.b-time').textContent = fmtTime(curStart)+'–'+fmtTime(curStart+curDur)+' · '+fmtDuration(curDur);
+                if (curDur >= MAX_DUR && !cappedNotified){ cappedNotified = true; toast('จองได้สูงสุด 2 ชั่วโมง'); }
+            }
+            function onUp(){
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                el.classList.remove('dragging');
+
+                if (overlaps(b.room, curStart, curDur, b.id)){
+                    el.classList.add('rejected');
+                    toast('ช่วงเวลานี้ไม่ว่าง');
+                    setTimeout(()=> renderBookings(), 380);
+                    return;
+                }
+                b.start = curStart; b.duration = curDur;
+                renderBookings();
+            }
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+        }
+
+        document.getElementById('prevDay').addEventListener('click', ()=>{ dayOffset--; renderDayLabel(); buildGrid(); });
+        document.getElementById('nextDay').addEventListener('click', ()=>{ dayOffset++; renderDayLabel(); buildGrid(); });
+
+        renderLegend();
+        renderDayLabel();
+        buildGrid();
+    })();
+</script>
+</body>
+</html>
