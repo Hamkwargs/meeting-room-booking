@@ -11,6 +11,8 @@ permissions:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ github.sha }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -52,3 +54,36 @@ jobs:
           git config user.email "github-actions@github.com"
           git add helm-chart/values.yaml
           git diff --cached --quiet || (git commit -m "ci: update image tags to ${{ github.sha }}" && git push)
+
+  deploy-dev:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: booking-dev
+    steps:
+      - name: Deploy to Kubernetes VM
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd ${{ secrets.APP_DIR }}
+            git fetch origin main
+            git reset --hard origin/main
+
+            helm upgrade --install booking-dev ./helm-chart \
+              -n booking-dev \
+              --create-namespace \
+              -f helm-chart/values.yaml \
+              --set image.tag=${{ needs.build-and-push.outputs.image_tag }} \
+              --set frontend.image.tag=${{ needs.build-and-push.outputs.image_tag }}
+
+            kubectl rollout status deployment/booking-dev-meeting-room-booking-backend -n booking-dev --timeout=180s
+            kubectl rollout status deployment/booking-dev-meeting-room-booking-frontend -n booking-dev --timeout=180s
+
+            kubectl wait --for=condition=complete job/booking-dev-meeting-room-booking-migrate -n booking-dev --timeout=180s || true
+
+            BACKEND_POD=$(kubectl get pod -n booking-dev -l app.kubernetes.io/instance=booking-dev,component=backend -o jsonpath='{.items[0].metadata.name}')
+            kubectl exec -n booking-dev "$BACKEND_POD" -- node -e "require('./src/db/pool').query('SELECT COUNT(*) FROM rooms').then(r=>{console.log(r.rows);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
