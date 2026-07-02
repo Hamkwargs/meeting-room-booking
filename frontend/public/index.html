@@ -366,6 +366,61 @@
             font-size:10.5px;
         }
 
+        /* ---- auth screen ---- */
+        .app{ display:none; }
+        .auth-screen{
+            position:fixed; inset:0;
+            background:var(--bg);
+            display:flex; align-items:center; justify-content:center;
+            z-index:100;
+        }
+        .auth-card{
+            background:var(--surface);
+            border:1px solid var(--line);
+            border-radius:16px;
+            padding:32px 28px;
+            width:320px;
+            box-shadow:0 1px 2px rgba(20,20,20,.03);
+        }
+        .auth-card h1{
+            font-family:'Space Grotesk',sans-serif;
+            font-size:22px; margin:0 0 4px;
+        }
+        .auth-sub{ margin:0 0 20px; font-size:12.5px; color:var(--muted); }
+        .auth-field{ margin-bottom:14px; }
+        .auth-field label{ display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+        .auth-field input{
+            width:100%; padding:9px 10px;
+            border:1px solid var(--line); border-radius:8px;
+            font-family:'Inter',sans-serif; font-size:13.5px;
+            background:var(--bg);
+        }
+        .auth-field input:focus{ outline:2px solid var(--accent); outline-offset:1px; }
+        #authSubmit{
+            width:100%; padding:10px;
+            background:var(--accent); color:#fff;
+            border:none; border-radius:8px;
+            font-family:'Inter',sans-serif; font-weight:600; font-size:13.5px;
+            cursor:pointer; margin-top:4px;
+        }
+        .auth-toggle{
+            width:100%; margin-top:10px;
+            background:transparent; border:none;
+            color:var(--accent); font-size:12.5px; cursor:pointer;
+        }
+        .auth-error{ color:var(--danger); font-size:12px; margin:10px 0 0; min-height:14px; }
+        .logout-btn{
+            border:1px solid var(--line);
+            background:var(--surface);
+            border-radius:10px;
+            padding:6px 12px;
+            font-family:'Inter',sans-serif;
+            font-size:12px;
+            color:var(--muted);
+            cursor:pointer;
+        }
+        .logout-btn:hover{ color:var(--danger); border-color:var(--danger); }
+
         @media (prefers-reduced-motion: reduce){
             *{ animation-duration:.001s !important; transition-duration:.001s !important; }
         }
@@ -373,17 +428,42 @@
 </head>
 <body>
 
+<div class="auth-screen" id="authScreen">
+    <div class="auth-card">
+        <h1>Room Booking</h1>
+        <p class="auth-sub">เข้าสู่ระบบเพื่อจองห้องประชุม</p>
+        <form id="authForm">
+            <div class="auth-field auth-name" style="display:none">
+                <label>ชื่อ</label>
+                <input type="text" id="authName" placeholder="ชื่อของคุณ" />
+            </div>
+            <div class="auth-field">
+                <label>อีเมล</label>
+                <input type="email" id="authEmail" required placeholder="you@company.com" />
+            </div>
+            <div class="auth-field">
+                <label>รหัสผ่าน</label>
+                <input type="password" id="authPassword" required placeholder="อย่างน้อย 6 ตัวอักษร" />
+            </div>
+            <button type="submit" id="authSubmit">เข้าสู่ระบบ</button>
+        </form>
+        <button type="button" id="authToggle" class="auth-toggle">ยังไม่มีบัญชี? สมัครสมาชิก</button>
+        <p class="auth-error" id="authError"></p>
+    </div>
+</div>
+
 <div class="app">
     <div class="topbar">
         <div class="title-block">
             <h1>Room Booking</h1>
-            <p>ลากบนตารางเพื่อจองห้อง · ยืด/หดขอบเพื่อปรับเวลา · สูงสุด 2 ชั่วโมงต่อครั้ง</p>
+            <p>ลากบนตารางเพื่อจองห้อง · ยืด/หดขอบเพื่อปรับเวลา (เฉพาะตอนสร้างใหม่) · สูงสุด 2 ชั่วโมงต่อครั้ง</p>
         </div>
         <div class="day-nav">
             <button id="prevDay" aria-label="วันก่อนหน้า">‹</button>
             <span id="dayLabel"></span>
             <button id="nextDay" aria-label="วันถัดไป">›</button>
         </div>
+        <button id="logoutBtn" class="logout-btn">ออกจากระบบ</button>
     </div>
 
     <div class="legend" id="legend"></div>
@@ -405,11 +485,34 @@
 
 <script>
     (function(){
-        const ROOMS = [
-            { key:'phoenix', name:'Phoenix', floor:'Floor 3', capacity:8, color:'var(--phoenix)', soft:'var(--phoenix-soft)', tags:['Projector','Whiteboard'] },
-            { key:'falcon',  name:'Falcon',  floor:'Floor 5', capacity:4, color:'var(--falcon)',  soft:'var(--falcon-soft)',  tags:['TV','Video Conference'] },
-            { key:'griffin', name:'Griffin', floor:'Floor 5', capacity:12,color:'var(--griffin)', soft:'var(--griffin-soft)', tags:['Projector','TV','Video Conference'] },
+        // ปรับ path นี้ถ้า ingress ไม่ได้ proxy /api ไปที่ backend service โดยตรง
+        const API_BASE = '/api';
+
+        const ROOM_PALETTE = [
+            { color:'var(--phoenix)', soft:'var(--phoenix-soft)' },
+            { color:'var(--falcon)',  soft:'var(--falcon-soft)'  },
+            { color:'var(--griffin)', soft:'var(--griffin-soft)' },
         ];
+
+        let ROOMS = [];        // โหลดจาก GET /api/rooms
+        let allBookings = [];  // ผลดิบจาก GET /api/bookings (ของ user คนนี้เท่านั้น)
+
+        let authToken = localStorage.getItem('bookingToken') || null;
+        let currentUser = JSON.parse(localStorage.getItem('bookingUser') || 'null');
+
+        async function apiFetch(path, options = {}){
+            const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+            if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+            const res = await fetch(API_BASE + path, { ...options, headers });
+            let data = null;
+            try { data = await res.json(); } catch (_) { /* no body */ }
+
+            if (!res.ok){
+                throw new Error(data?.error || `เกิดข้อผิดพลาด (${res.status})`);
+            }
+            return data;
+        }
 
         const DAY_START = 8 * 60;   // minutes
         const DAY_END   = 20 * 60;
@@ -419,16 +522,37 @@
         const MAX_DUR = 120;
         const GRID_H = (DAY_END - DAY_START) * PX_PER_MIN;
 
-        let idSeq = 1;
-        let bookings = [
-            { id: idSeq++, room:'phoenix', start: 9*60 - DAY_START,  duration: 60, title:'Weekly Sync' },
-            { id: idSeq++, room:'falcon',  start: 10*60+30 - DAY_START, duration: 45, title:'Client Call' },
-            { id: idSeq++, room:'griffin', start: 13*60 - DAY_START, duration: 90, title:'Sprint Planning' },
-            { id: idSeq++, room:'phoenix', start: 15*60 - DAY_START, duration: 30, title:'1:1' },
-        ];
+        let bookings = []; // booking ของ "วันที่กำลังดูอยู่" เท่านั้น (คำนวณจาก allBookings)
 
         let dayOffset = 0;
         const baseDate = new Date();
+
+        function dateForOffset(offset){
+            const d = new Date(baseDate);
+            d.setDate(d.getDate() + offset);
+            d.setHours(0,0,0,0);
+            return d;
+        }
+        function isSameDay(a, b){
+            return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+        }
+        function bookingsForCurrentDay(){
+            const dayDate = dateForOffset(dayOffset);
+            return allBookings
+                .filter(b => b.status !== 'cancelled')
+                .filter(b => isSameDay(new Date(b.start_time), dayDate))
+                .map(b => {
+                    const start = new Date(b.start_time);
+                    const end = new Date(b.end_time);
+                    return {
+                        id: b.id,
+                        room: String(b.room_id),
+                        start: (start.getHours()*60 + start.getMinutes()) - DAY_START,
+                        duration: Math.round((end - start) / 60000),
+                        title: b.title,
+                    };
+                });
+        }
 
         const grid = document.getElementById('grid');
         const legend = document.getElementById('legend');
@@ -475,6 +599,7 @@
         }
 
         function buildGrid(){
+            bookings = bookingsForCurrentDay();
             grid.innerHTML = '';
 
             // top-left spacer
@@ -555,13 +680,19 @@
         <div class="handle bottom"></div>`;
                 track.appendChild(el);
 
-                el.querySelector('.b-del').addEventListener('click', (e)=>{
+                el.querySelector('.b-del').addEventListener('click', async (e)=>{
                     e.stopPropagation();
                     el.classList.add('exiting');
-                    setTimeout(()=>{
-                        bookings = bookings.filter(x=>x.id!==b.id);
-                        renderBookings();
-                    }, 200);
+                    try {
+                        await apiFetch(`/bookings/${b.id}/cancel`, { method: 'PATCH' });
+                        setTimeout(async ()=>{
+                            await loadBookings();
+                            buildGrid();
+                        }, 200);
+                    } catch (err) {
+                        el.classList.remove('exiting');
+                        toast(err.message || 'ยกเลิกไม่สำเร็จ');
+                    }
                 });
                 el.querySelector('.handle.top').addEventListener('pointerdown', (e)=> startResize(e, b, 'top'));
                 el.querySelector('.handle.bottom').addEventListener('pointerdown', (e)=> startResize(e, b, 'bottom'));
@@ -614,10 +745,32 @@
                 }
                 if (curDur >= MAX_DUR) toast('จองได้สูงสุด 2 ชั่วโมง');
 
-                openTitlePopover(ghost, ev.clientX, ev.clientY, (title)=>{
+                openTitlePopover(ghost, ev.clientX, ev.clientY, async (title)=>{
                     ghost.remove();
-                    bookings.push({ id: idSeq++, room, start: curStart, duration: curDur, title: title || 'จองห้อง' });
-                    renderBookings();
+
+                    const dayDate = dateForOffset(dayOffset);
+                    const startDate = new Date(dayDate);
+                    startDate.setMinutes(DAY_START + curStart);
+                    const endDate = new Date(startDate);
+                    endDate.setMinutes(endDate.getMinutes() + curDur);
+
+                    try {
+                        await apiFetch('/bookings', {
+                            method: 'POST',
+                            body: JSON.stringify({
+                                room_id: Number(room),
+                                title: title || 'จองห้อง',
+                                start_time: startDate.toISOString(),
+                                end_time: endDate.toISOString(),
+                            }),
+                        });
+                        await loadBookings();
+                        buildGrid();
+                        toast('จองสำเร็จ');
+                    } catch (err) {
+                        toast(err.message || 'จองไม่สำเร็จ');
+                        buildGrid();
+                    }
                 }, ()=> ghost.remove());
             }
             document.addEventListener('pointermove', onMove);
@@ -691,13 +844,9 @@
                 document.removeEventListener('pointerup', onUp);
                 el.classList.remove('dragging');
 
-                if (overlaps(curRoom, curStart, b.duration, b.id)){
-                    el.classList.add('rejected');
-                    toast('ช่วงเวลานี้ไม่ว่าง');
-                    setTimeout(()=> renderBookings(), 380);
-                    return;
-                }
-                b.start = curStart; b.room = curRoom;
+                // TODO: backend ยังไม่มี endpoint สำหรับแก้ไขเวลา/ห้องของ booking เดิม
+                // (มีแค่ GET /, POST /, PATCH /:id/cancel) — ตอนนี้เลยแค่ revert กลับตำแหน่งเดิม
+                toast('ย้ายเวลาการจองยังไม่รองรับ (backend ยังไม่มี endpoint แก้ไข) — ลบแล้วจองใหม่แทนได้');
                 renderBookings();
             }
             document.addEventListener('pointermove', onMove);
@@ -737,13 +886,8 @@
                 document.removeEventListener('pointerup', onUp);
                 el.classList.remove('dragging');
 
-                if (overlaps(b.room, curStart, curDur, b.id)){
-                    el.classList.add('rejected');
-                    toast('ช่วงเวลานี้ไม่ว่าง');
-                    setTimeout(()=> renderBookings(), 380);
-                    return;
-                }
-                b.start = curStart; b.duration = curDur;
+                // TODO: backend ยังไม่มี endpoint สำหรับแก้ไขเวลา/ห้องของ booking เดิม
+                toast('ปรับเวลาการจองยังไม่รองรับ (backend ยังไม่มี endpoint แก้ไข) — ลบแล้วจองใหม่แทนได้');
                 renderBookings();
             }
             document.addEventListener('pointermove', onMove);
@@ -752,10 +896,95 @@
 
         document.getElementById('prevDay').addEventListener('click', ()=>{ dayOffset--; renderDayLabel(); buildGrid(); });
         document.getElementById('nextDay').addEventListener('click', ()=>{ dayOffset++; renderDayLabel(); buildGrid(); });
+        document.getElementById('logoutBtn').addEventListener('click', ()=>{
+            authToken = null; currentUser = null;
+            localStorage.removeItem('bookingToken');
+            localStorage.removeItem('bookingUser');
+            showAuthScreen();
+        });
 
-        renderLegend();
-        renderDayLabel();
-        buildGrid();
+        // ---- data loading ----
+        async function loadRooms(){
+            const rooms = await apiFetch('/rooms');
+            ROOMS = rooms.map((r, i) => ({
+                key: String(r.id),
+                name: r.name,
+                floor: r.location || '',
+                capacity: r.capacity,
+                color: ROOM_PALETTE[i % ROOM_PALETTE.length].color,
+                soft: ROOM_PALETTE[i % ROOM_PALETTE.length].soft,
+                tags: Array.isArray(r.equipment) ? r.equipment : [],
+            }));
+        }
+        async function loadBookings(){
+            allBookings = await apiFetch('/bookings');
+        }
+        async function init(){
+            try {
+                await loadRooms();
+                await loadBookings();
+                renderLegend();
+                renderDayLabel();
+                buildGrid();
+            } catch (err) {
+                toast(err.message || 'โหลดข้อมูลไม่สำเร็จ');
+            }
+        }
+
+        // ---- auth ----
+        let isRegisterMode = false;
+        const authScreen = document.getElementById('authScreen');
+        const authForm = document.getElementById('authForm');
+        const authErrorEl = document.getElementById('authError');
+        const authToggleBtn = document.getElementById('authToggle');
+        const authNameField = document.querySelector('.auth-name');
+        const authSubmitBtn = document.getElementById('authSubmit');
+        const appEl = document.querySelector('.app');
+
+        authToggleBtn.addEventListener('click', ()=>{
+            isRegisterMode = !isRegisterMode;
+            authNameField.style.display = isRegisterMode ? 'block' : 'none';
+            authSubmitBtn.textContent = isRegisterMode ? 'สมัครสมาชิก' : 'เข้าสู่ระบบ';
+            authToggleBtn.textContent = isRegisterMode ? 'มีบัญชีอยู่แล้ว? เข้าสู่ระบบ' : 'ยังไม่มีบัญชี? สมัครสมาชิก';
+            authErrorEl.textContent = '';
+        });
+
+        authForm.addEventListener('submit', async (e)=>{
+            e.preventDefault();
+            authErrorEl.textContent = '';
+            const email = document.getElementById('authEmail').value.trim();
+            const password = document.getElementById('authPassword').value;
+            const name = document.getElementById('authName').value.trim();
+
+            try {
+                const path = isRegisterMode ? '/auth/register' : '/auth/login';
+                const body = isRegisterMode ? { name, email, password } : { email, password };
+                const data = await apiFetch(path, { method: 'POST', body: JSON.stringify(body) });
+                authToken = data.token;
+                currentUser = data.user;
+                localStorage.setItem('bookingToken', authToken);
+                localStorage.setItem('bookingUser', JSON.stringify(currentUser));
+                showApp();
+            } catch (err) {
+                authErrorEl.textContent = err.message || 'เกิดข้อผิดพลาด';
+            }
+        });
+
+        function showAuthScreen(){
+            authScreen.style.display = 'flex';
+            appEl.style.display = 'none';
+        }
+        function showApp(){
+            authScreen.style.display = 'none';
+            appEl.style.display = 'block';
+            init();
+        }
+
+        if (authToken){
+            showApp();
+        } else {
+            showAuthScreen();
+        }
     })();
 </script>
 </body>
