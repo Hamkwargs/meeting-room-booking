@@ -39,7 +39,6 @@ async function createBooking(req, res) {
     try {
         await client.query('BEGIN');
 
-        // Lock แถวของห้องนี้ไว้ก่อน กันคนอื่นมาจองห้องเดียวกันพร้อมกัน (race condition)
         const roomCheck = await client.query('SELECT id FROM rooms WHERE id = $1 FOR UPDATE', [room_id]);
         if (roomCheck.rows.length === 0) {
             await client.query('ROLLBACK');
@@ -73,6 +72,76 @@ async function createBooking(req, res) {
     }
 }
 
+async function updateBooking(req, res) {
+    const { id } = req.params;
+    const { room_id, title, start_time, end_time } = req.body;
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const existingResult = await client.query(
+            'SELECT * FROM bookings WHERE id = $1 AND user_id = $2 FOR UPDATE',
+            [id, req.user.id]
+        );
+        const existing = existingResult.rows[0];
+        if (!existing) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Booking not found' });
+        }
+        if (existing.status !== 'confirmed') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Cannot update a cancelled booking' });
+        }
+
+        const newRoomId = room_id || existing.room_id;
+        const newTitle = title || existing.title;
+        const newStart = start_time ? new Date(start_time) : existing.start_time;
+        const newEnd = end_time ? new Date(end_time) : existing.end_time;
+
+        if (isNaN(newStart) || isNaN(newEnd) || newEnd <= newStart) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Invalid time range: end_time must be after start_time' });
+        }
+        if (newStart < new Date()) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Cannot book a time slot in the past' });
+        }
+
+        const roomCheck = await client.query('SELECT id FROM rooms WHERE id = $1 FOR UPDATE', [newRoomId]);
+        if (roomCheck.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Room not found' });
+        }
+
+        const conflictResult = await client.query(
+            `SELECT id FROM bookings
+       WHERE room_id = $1 AND status = 'confirmed' AND id != $2
+       AND start_time < $4 AND end_time > $3`,
+            [newRoomId, id, newStart, newEnd]
+        );
+        if (conflictResult.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'This room is already booked during the requested time slot' });
+        }
+
+        const result = await client.query(
+            `UPDATE bookings SET room_id = $1, title = $2, start_time = $3, end_time = $4
+       WHERE id = $5 RETURNING *`,
+            [newRoomId, newTitle, newStart, newEnd, id]
+        );
+
+        await client.query('COMMIT');
+        res.json(result.rows[0]);
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('updateBooking error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    } finally {
+        client.release();
+    }
+}
+
 async function cancelBooking(req, res) {
     const { id } = req.params;
 
@@ -95,4 +164,4 @@ async function cancelBooking(req, res) {
     }
 }
 
-module.exports = { listBookings, createBooking, cancelBooking };
+module.exports = { listBookings, createBooking, updateBooking, cancelBooking };
