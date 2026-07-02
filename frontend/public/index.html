@@ -495,7 +495,7 @@
         ];
 
         let ROOMS = [];        // โหลดจาก GET /api/rooms
-        let allBookings = [];  // ผลดิบจาก GET /api/bookings (ของ user คนนี้เท่านั้น)
+        let allBookings = [];  // ผลดิบจาก GET /api/bookings/all (ทุกห้อง ทุก user)
 
         let authToken = localStorage.getItem('bookingToken') || null;
         let currentUser = JSON.parse(localStorage.getItem('bookingUser') || 'null');
@@ -844,15 +844,38 @@
                 if (el.parentElement !== t) t.appendChild(el);
                 el.style.top = (curStart*PX_PER_MIN)+'px';
             }
-            function onUp(){
+            async function onUp(){
                 document.removeEventListener('pointermove', onMove);
                 document.removeEventListener('pointerup', onUp);
                 el.classList.remove('dragging');
 
-                // TODO: backend ยังไม่มี endpoint สำหรับแก้ไขเวลา/ห้องของ booking เดิม
-                // (มีแค่ GET /, POST /, PATCH /:id/cancel) — ตอนนี้เลยแค่ revert กลับตำแหน่งเดิม
-                toast('ย้ายเวลาการจองยังไม่รองรับ (backend ยังไม่มี endpoint แก้ไข) — ลบแล้วจองใหม่แทนได้');
-                renderBookings();
+                if (curStart === origStart && curRoom === origRoom){
+                    renderBookings();
+                    return;
+                }
+
+                const dayDate = dateForOffset(dayOffset);
+                const startDate = new Date(dayDate);
+                startDate.setMinutes(DAY_START + curStart);
+                const endDate = new Date(startDate);
+                endDate.setMinutes(endDate.getMinutes() + b.duration);
+
+                try {
+                    await apiFetch(`/bookings/${b.id}`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({
+                            room_id: Number(curRoom),
+                            start_time: startDate.toISOString(),
+                            end_time: endDate.toISOString(),
+                        }),
+                    });
+                    await loadBookings();
+                    buildGrid();
+                    toast('ย้ายเวลาสำเร็จ');
+                } catch (err) {
+                    toast(err.message || 'ย้ายเวลาไม่สำเร็จ');
+                    buildGrid(); // revert กลับตำแหน่งเดิมโดยคำนวณจาก allBookings เดิม (ยังไม่ได้ loadBookings ใหม่)
+                }
             }
             document.addEventListener('pointermove', onMove);
             document.addEventListener('pointerup', onUp);
@@ -886,14 +909,37 @@
                 el.querySelector('.b-time').textContent = fmtTime(curStart)+'–'+fmtTime(curStart+curDur)+' · '+fmtDuration(curDur);
                 if (curDur >= MAX_DUR && !cappedNotified){ cappedNotified = true; toast('จองได้สูงสุด 2 ชั่วโมง'); }
             }
-            function onUp(){
+            async function onUp(){
                 document.removeEventListener('pointermove', onMove);
                 document.removeEventListener('pointerup', onUp);
                 el.classList.remove('dragging');
 
-                // TODO: backend ยังไม่มี endpoint สำหรับแก้ไขเวลา/ห้องของ booking เดิม
-                toast('ปรับเวลาการจองยังไม่รองรับ (backend ยังไม่มี endpoint แก้ไข) — ลบแล้วจองใหม่แทนได้');
-                renderBookings();
+                if (curStart === origStart && curDur === b.duration){
+                    renderBookings();
+                    return;
+                }
+
+                const dayDate = dateForOffset(dayOffset);
+                const startDate = new Date(dayDate);
+                startDate.setMinutes(DAY_START + curStart);
+                const endDate = new Date(startDate);
+                endDate.setMinutes(endDate.getMinutes() + curDur);
+
+                try {
+                    await apiFetch(`/bookings/${b.id}`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({
+                            start_time: startDate.toISOString(),
+                            end_time: endDate.toISOString(),
+                        }),
+                    });
+                    await loadBookings();
+                    buildGrid();
+                    toast('ปรับเวลาสำเร็จ');
+                } catch (err) {
+                    toast(err.message || 'ปรับเวลาไม่สำเร็จ');
+                    buildGrid();
+                }
             }
             document.addEventListener('pointermove', onMove);
             document.addEventListener('pointerup', onUp);
@@ -922,7 +968,7 @@
             }));
         }
         async function loadBookings(){
-            allBookings = await apiFetch('/bookings');
+            allBookings = await apiFetch('/bookings/all');
         }
         async function init(){
             try {

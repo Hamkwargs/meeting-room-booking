@@ -4,16 +4,59 @@ async function listBookings(req, res) {
     try {
         const result = await pool.query(
             `SELECT b.*, r.name AS room_name, u.name AS user_name
-       FROM bookings b
-       JOIN rooms r ON r.id = b.room_id
-       JOIN users u ON u.id = b.user_id
-       WHERE b.user_id = $1
-       ORDER BY b.start_time DESC`,
+             FROM bookings b
+                      JOIN rooms r ON r.id = b.room_id
+                      JOIN users u ON u.id = b.user_id
+             WHERE b.user_id = $1
+             ORDER BY b.start_time DESC`,
             [req.user.id]
         );
         res.json(result.rows);
     } catch (err) {
         console.error('listBookings error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+}
+
+// booking ของทุกห้อง ทุก user (ใช้แสดงตารางรวมหน้าแรก — ทุกคนเห็นชื่อผู้จองได้
+// แต่แก้/ลบได้เฉพาะของตัวเอง ซึ่งคุมสิทธิ์อยู่แล้วใน updateBooking/cancelBooking)
+async function listAllBookings(req, res) {
+    try {
+        const result = await pool.query(
+            `SELECT b.*, r.name AS room_name, u.name AS user_name
+       FROM bookings b
+       JOIN rooms r ON r.id = b.room_id
+       JOIN users u ON u.id = b.user_id
+       ORDER BY b.start_time DESC`
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error('listAllBookings error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+}
+
+// booking ทั้งหมดของห้องเดียว (ทุก user เห็นได้)
+async function listRoomBookings(req, res) {
+    const { id } = req.params;
+
+    try {
+        const roomCheck = await pool.query('SELECT id FROM rooms WHERE id = $1', [id]);
+        if (roomCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'Room not found' });
+        }
+
+        const result = await pool.query(
+            `SELECT b.*, u.name AS user_name
+       FROM bookings b
+       JOIN users u ON u.id = b.user_id
+       WHERE b.room_id = $1 AND b.status = 'confirmed'
+       ORDER BY b.start_time ASC`,
+            [id]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error('listRoomBookings error:', err);
         res.status(500).json({ error: 'Internal server error' });
     }
 }
@@ -39,6 +82,7 @@ async function createBooking(req, res) {
     try {
         await client.query('BEGIN');
 
+        // Lock แถวของห้องนี้ไว้ก่อน กันคนอื่นมาจองห้องเดียวกันพร้อมกัน (race condition)
         const roomCheck = await client.query('SELECT id FROM rooms WHERE id = $1 FOR UPDATE', [room_id]);
         if (roomCheck.rows.length === 0) {
             await client.query('ROLLBACK');
@@ -72,6 +116,7 @@ async function createBooking(req, res) {
     }
 }
 
+// ย้ายเวลา/ห้อง ของ booking เดิม (ใช้กับ drag-to-move และ resize บนหน้าเว็บ)
 async function updateBooking(req, res) {
     const { id } = req.params;
     const { room_id, title, start_time, end_time } = req.body;
@@ -114,6 +159,7 @@ async function updateBooking(req, res) {
             return res.status(404).json({ error: 'Room not found' });
         }
 
+        // exclude ตัวเองออกจากการเช็ค conflict (id != $2)
         const conflictResult = await client.query(
             `SELECT id FROM bookings
        WHERE room_id = $1 AND status = 'confirmed' AND id != $2
@@ -164,66 +210,11 @@ async function cancelBooking(req, res) {
     }
 }
 
-async function searchRooms(req, res) {
-    const { start_time, end_time, min_capacity, equipment } = req.query;
-
-    // เวลา: ต้องมาคู่กันทั้ง start และ end หรือไม่ต้องใส่เลย
-    if ((start_time && !end_time) || (!start_time && end_time)) {
-        return res.status(400).json({ error: 'Both start_time and end_time are required together' });
-    }
-
-    const start = start_time ? new Date(start_time) : null;
-    const end = end_time ? new Date(end_time) : null;
-
-    if (start && end && (isNaN(start) || isNaN(end) || end <= start)) {
-        return res.status(400).json({ error: 'Invalid time range: end_time must be after start_time' });
-    }
-
-    const capacity = min_capacity ? parseInt(min_capacity, 10) : 0;
-    if (isNaN(capacity) || capacity < 0) {
-        return res.status(400).json({ error: 'min_capacity must be a non-negative number' });
-    }
-
-    const equipmentList = equipment
-        ? equipment.split(',').map((e) => e.trim()).filter(Boolean)
-        : [];
-
-    try {
-        const params = [capacity];
-        let query = `
-      SELECT r.*, COALESCE(array_agg(DISTINCT e.name) FILTER (WHERE e.name IS NOT NULL), '{}') AS equipment
-      FROM rooms r
-      LEFT JOIN room_equipment re ON re.room_id = r.id
-      LEFT JOIN equipment e ON e.id = re.equipment_id
-      WHERE r.capacity >= $1
-    `;
-
-        if (start && end) {
-            params.push(start, end);
-            query += `
-      AND NOT EXISTS (
-        SELECT 1 FROM bookings b
-        WHERE b.room_id = r.id AND b.status = 'confirmed'
-        AND b.start_time < $${params.length} AND b.end_time > $${params.length - 1}
-      )
-      `;
-        }
-
-        query += ` GROUP BY r.id `;
-
-        if (equipmentList.length > 0) {
-            params.push(equipmentList);
-            query += ` HAVING array_agg(DISTINCT e.name) FILTER (WHERE e.name IS NOT NULL) @> $${params.length}::text[] `;
-        }
-
-        query += ` ORDER BY r.id `;
-
-        const result = await pool.query(query, params);
-        res.json(result.rows);
-    } catch (err) {
-        console.error('searchRooms error:', err);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-}
-
-module.exports = { listRooms, createRoom, deleteRoom, listRoomsWithBookings, searchRooms };
+module.exports = {
+    listBookings,
+    listAllBookings,
+    listRoomBookings,
+    createBooking,
+    updateBooking,
+    cancelBooking,
+};
