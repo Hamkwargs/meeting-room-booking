@@ -6,7 +6,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: meeting-room-booking-main
@@ -17,17 +17,11 @@ jobs:
     name: Build and Push Docker Images
     runs-on: ubuntu-latest
 
-    outputs:
-      image_tag: ${{ steps.image-tag.outputs.tag }}
-
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set image tag
-        id: image-tag
-        run: |
-          echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        with:
+          fetch-depth: 0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -56,110 +50,33 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/booking-frontend:${{ github.sha }}
             ${{ secrets.DOCKERHUB_USERNAME }}/booking-frontend:latest
 
-  deploy-dev:
-    name: Deploy to Development
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    environment: booking-dev
+      - name: Update Helm image tags
+        shell: bash
+        run: |
+          set -e
 
-    steps:
-      - name: Deploy to Kubernetes VM
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          script_stop: true
+          sed -i "/^image:/,/^[^ ]/ s|^  repository:.*|  repository: ${{ secrets.DOCKERHUB_USERNAME }}/booking-backend|" helm-chart/values.yaml
+          sed -i "/^image:/,/^[^ ]/ s|^  tag:.*|  tag: \"${{ github.sha }}\"|" helm-chart/values.yaml
 
-          script: |
-            set -e
+          sed -i "/^frontend:/,/^[^ ]/ s|^    repository:.*|    repository: ${{ secrets.DOCKERHUB_USERNAME }}/booking-frontend|" helm-chart/values.yaml
+          sed -i "/^frontend:/,/^[^ ]/ s|^    tag:.*|    tag: \"${{ github.sha }}\"|" helm-chart/values.yaml
 
-            echo "========================================"
-            echo "Deploying Meeting Room Booking"
-            echo "Image tag: ${{ needs.build-and-push.outputs.image_tag }}"
-            echo "========================================"
+      - name: Commit image tags for Argo CD
+        shell: bash
+        run: |
+          set -e
 
-            cd "${{ secrets.APP_DIR }}"
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
 
-            echo "Updating source code..."
-            git fetch origin main
-            git reset --hard origin/main
+          git add helm-chart/values.yaml
 
-            echo "Checking Kubernetes connection..."
-            kubectl cluster-info
-            kubectl get nodes
+          if git diff --cached --quiet; then
+            echo "No image tag changes"
+            exit 0
+          fi
 
-            echo "Deploying Helm chart..."
-            helm upgrade --install booking-dev ./helm-chart \
-              --namespace booking-dev \
-              --create-namespace \
-              --values helm-chart/values.yaml \
-              --set image.repository=${{ secrets.DOCKERHUB_USERNAME }}/booking-backend \
-              --set image.tag=${{ needs.build-and-push.outputs.image_tag }} \
-              --set frontend.image.repository=${{ secrets.DOCKERHUB_USERNAME }}/booking-frontend \
-              --set frontend.image.tag=${{ needs.build-and-push.outputs.image_tag }} \
-              --wait \
-              --timeout 5m
+          git commit -m "ci: update image tags to ${{ github.sha }} [skip ci]"
 
-            echo "Waiting for backend deployment..."
-            kubectl rollout status \
-              deployment/booking-dev-meeting-room-booking-backend \
-              --namespace booking-dev \
-              --timeout=180s
-
-            echo "Waiting for frontend deployment..."
-            kubectl rollout status \
-              deployment/booking-dev-meeting-room-booking-frontend \
-              --namespace booking-dev \
-              --timeout=180s
-
-            echo "Current pods:"
-            kubectl get pods -n booking-dev -o wide
-
-            echo "Current services:"
-            kubectl get services -n booking-dev
-
-            echo "Checking migration job..."
-            kubectl wait \
-              --for=condition=complete \
-              job/booking-dev-meeting-room-booking-migrate \
-              --namespace booking-dev \
-              --timeout=180s || true
-
-            echo "Checking database rooms..."
-            BACKEND_POD=$(kubectl get pods \
-              --namespace booking-dev \
-              --selector=app.kubernetes.io/instance=booking-dev,component=backend \
-              --field-selector=status.phase=Running \
-              --output=jsonpath='{.items[0].metadata.name}')
-
-            if [ -z "$BACKEND_POD" ]; then
-              echo "Backend pod was not found"
-              kubectl get pods -n booking-dev
-              exit 1
-            fi
-
-            echo "Backend pod: $BACKEND_POD"
-
-            kubectl exec \
-              --namespace booking-dev \
-              "$BACKEND_POD" \
-              -- node -e "
-                const pool = require('./src/db/pool');
-
-                pool.query('SELECT COUNT(*) AS room_count FROM rooms')
-                  .then(result => {
-                    console.log('Database connection successful');
-                    console.log(result.rows);
-                    process.exit(0);
-                  })
-                  .catch(error => {
-                    console.error('Database check failed');
-                    console.error(error);
-                    process.exit(1);
-                  });
-              "
-
-            echo "========================================"
-            echo "Deployment completed successfully"
-            echo "========================================"
+          git pull --rebase origin main
+          git push origin HEAD:main
