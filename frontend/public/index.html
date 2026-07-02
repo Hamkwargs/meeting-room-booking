@@ -550,6 +550,8 @@
                         start: (start.getHours()*60 + start.getMinutes()) - DAY_START,
                         duration: Math.round((end - start) / 60000),
                         title: b.title,
+                        userId: b.user_id,
+                        userName: b.user_name,
                     };
                 });
         }
@@ -665,20 +667,23 @@
             bookings.forEach((b, i) => {
                 const room = ROOMS.find(r=>r.key===b.room);
                 const track = grid.querySelector(`.track[data-room="${b.room}"]`);
+                const isOwn = !!currentUser && b.userId === currentUser.id;
                 const el = document.createElement('div');
-                el.className = 'block';
+                el.className = 'block' + (isOwn ? '' : ' readonly');
                 el.style.background = room.color;
                 el.style.top = (b.start*PX_PER_MIN) + 'px';
                 el.style.height = (b.duration*PX_PER_MIN) + 'px';
                 el.style.animationDelay = (i*45)+'ms';
                 el.dataset.id = b.id;
                 el.innerHTML = `
-        <button class="b-del" aria-label="ลบการจอง">✕</button>
+        ${isOwn ? `<button class="b-del" aria-label="ลบการจอง">✕</button>` : ''}
         <div class="b-title">${b.title}</div>
         <div class="b-time">${fmtTime(b.start)}–${fmtTime(b.start+b.duration)} · ${fmtDuration(b.duration)}</div>
-        <div class="handle top"></div>
-        <div class="handle bottom"></div>`;
+        ${!isOwn && b.userName ? `<div class="b-owner">${b.userName}</div>` : ''}
+        ${isOwn ? `<div class="handle top"></div><div class="handle bottom"></div>` : ''}`;
                 track.appendChild(el);
+
+                if (!isOwn) return; // booking ของคนอื่น ดูได้อย่างเดียว ลาก/ลบ/ปรับขนาดไม่ได้
 
                 el.querySelector('.b-del').addEventListener('click', async (e)=>{
                     e.stopPropagation();
