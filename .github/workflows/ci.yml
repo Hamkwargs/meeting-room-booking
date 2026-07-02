@@ -6,18 +6,31 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: meeting-room-booking-main
+  cancel-in-progress: false
 
 jobs:
   build-and-push:
+    name: Build and Push Docker Images
     runs-on: ubuntu-latest
+
     outputs:
-      image_tag: ${{ github.sha }}
+      image_tag: ${{ steps.image-tag.outputs.tag }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image tag
+        id: image-tag
+        run: |
+          echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -43,22 +56,12 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/booking-frontend:${{ github.sha }}
             ${{ secrets.DOCKERHUB_USERNAME }}/booking-frontend:latest
 
-      - name: Update image tags in values.yaml
-        run: |
-          yq -i '.image.tag = "${{ github.sha }}"' helm-chart/values.yaml
-          yq -i '.frontend.image.tag = "${{ github.sha }}"' helm-chart/values.yaml
-
-      - name: Commit and push updated values.yaml
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add helm-chart/values.yaml
-          git diff --cached --quiet || (git commit -m "ci: update image tags to ${{ github.sha }}" && git push)
-
   deploy-dev:
+    name: Deploy to Development
     needs: build-and-push
     runs-on: ubuntu-latest
     environment: booking-dev
+
     steps:
       - name: Deploy to Kubernetes VM
         uses: appleboy/ssh-action@v1.2.0
@@ -67,23 +70,96 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           script_stop: true
+
           script: |
             set -e
-            cd ${{ secrets.APP_DIR }}
+
+            echo "========================================"
+            echo "Deploying Meeting Room Booking"
+            echo "Image tag: ${{ needs.build-and-push.outputs.image_tag }}"
+            echo "========================================"
+
+            cd "${{ secrets.APP_DIR }}"
+
+            echo "Updating source code..."
             git fetch origin main
             git reset --hard origin/main
 
+            echo "Checking Kubernetes connection..."
+            kubectl cluster-info
+            kubectl get nodes
+
+            echo "Deploying Helm chart..."
             helm upgrade --install booking-dev ./helm-chart \
-              -n booking-dev \
+              --namespace booking-dev \
               --create-namespace \
-              -f helm-chart/values.yaml \
+              --values helm-chart/values.yaml \
+              --set image.repository=${{ secrets.DOCKERHUB_USERNAME }}/booking-backend \
               --set image.tag=${{ needs.build-and-push.outputs.image_tag }} \
-              --set frontend.image.tag=${{ needs.build-and-push.outputs.image_tag }}
+              --set frontend.image.repository=${{ secrets.DOCKERHUB_USERNAME }}/booking-frontend \
+              --set frontend.image.tag=${{ needs.build-and-push.outputs.image_tag }} \
+              --wait \
+              --timeout 5m
 
-            kubectl rollout status deployment/booking-dev-meeting-room-booking-backend -n booking-dev --timeout=180s
-            kubectl rollout status deployment/booking-dev-meeting-room-booking-frontend -n booking-dev --timeout=180s
+            echo "Waiting for backend deployment..."
+            kubectl rollout status \
+              deployment/booking-dev-meeting-room-booking-backend \
+              --namespace booking-dev \
+              --timeout=180s
 
-            kubectl wait --for=condition=complete job/booking-dev-meeting-room-booking-migrate -n booking-dev --timeout=180s || true
+            echo "Waiting for frontend deployment..."
+            kubectl rollout status \
+              deployment/booking-dev-meeting-room-booking-frontend \
+              --namespace booking-dev \
+              --timeout=180s
 
-            BACKEND_POD=$(kubectl get pod -n booking-dev -l app.kubernetes.io/instance=booking-dev,component=backend -o jsonpath='{.items[0].metadata.name}')
-            kubectl exec -n booking-dev "$BACKEND_POD" -- node -e "require('./src/db/pool').query('SELECT COUNT(*) FROM rooms').then(r=>{console.log(r.rows);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+            echo "Current pods:"
+            kubectl get pods -n booking-dev -o wide
+
+            echo "Current services:"
+            kubectl get services -n booking-dev
+
+            echo "Checking migration job..."
+            kubectl wait \
+              --for=condition=complete \
+              job/booking-dev-meeting-room-booking-migrate \
+              --namespace booking-dev \
+              --timeout=180s || true
+
+            echo "Checking database rooms..."
+            BACKEND_POD=$(kubectl get pods \
+              --namespace booking-dev \
+              --selector=app.kubernetes.io/instance=booking-dev,component=backend \
+              --field-selector=status.phase=Running \
+              --output=jsonpath='{.items[0].metadata.name}')
+
+            if [ -z "$BACKEND_POD" ]; then
+              echo "Backend pod was not found"
+              kubectl get pods -n booking-dev
+              exit 1
+            fi
+
+            echo "Backend pod: $BACKEND_POD"
+
+            kubectl exec \
+              --namespace booking-dev \
+              "$BACKEND_POD" \
+              -- node -e "
+                const pool = require('./src/db/pool');
+
+                pool.query('SELECT COUNT(*) AS room_count FROM rooms')
+                  .then(result => {
+                    console.log('Database connection successful');
+                    console.log(result.rows);
+                    process.exit(0);
+                  })
+                  .catch(error => {
+                    console.error('Database check failed');
+                    console.error(error);
+                    process.exit(1);
+                  });
+              "
+
+            echo "========================================"
+            echo "Deployment completed successfully"
+            echo "========================================"
