@@ -164,4 +164,66 @@ async function cancelBooking(req, res) {
     }
 }
 
-module.exports = { listBookings, createBooking, updateBooking, cancelBooking };
+async function searchRooms(req, res) {
+    const { start_time, end_time, min_capacity, equipment } = req.query;
+
+    // เวลา: ต้องมาคู่กันทั้ง start และ end หรือไม่ต้องใส่เลย
+    if ((start_time && !end_time) || (!start_time && end_time)) {
+        return res.status(400).json({ error: 'Both start_time and end_time are required together' });
+    }
+
+    const start = start_time ? new Date(start_time) : null;
+    const end = end_time ? new Date(end_time) : null;
+
+    if (start && end && (isNaN(start) || isNaN(end) || end <= start)) {
+        return res.status(400).json({ error: 'Invalid time range: end_time must be after start_time' });
+    }
+
+    const capacity = min_capacity ? parseInt(min_capacity, 10) : 0;
+    if (isNaN(capacity) || capacity < 0) {
+        return res.status(400).json({ error: 'min_capacity must be a non-negative number' });
+    }
+
+    const equipmentList = equipment
+        ? equipment.split(',').map((e) => e.trim()).filter(Boolean)
+        : [];
+
+    try {
+        const params = [capacity];
+        let query = `
+      SELECT r.*, COALESCE(array_agg(DISTINCT e.name) FILTER (WHERE e.name IS NOT NULL), '{}') AS equipment
+      FROM rooms r
+      LEFT JOIN room_equipment re ON re.room_id = r.id
+      LEFT JOIN equipment e ON e.id = re.equipment_id
+      WHERE r.capacity >= $1
+    `;
+
+        if (start && end) {
+            params.push(start, end);
+            query += `
+      AND NOT EXISTS (
+        SELECT 1 FROM bookings b
+        WHERE b.room_id = r.id AND b.status = 'confirmed'
+        AND b.start_time < $${params.length} AND b.end_time > $${params.length - 1}
+      )
+      `;
+        }
+
+        query += ` GROUP BY r.id `;
+
+        if (equipmentList.length > 0) {
+            params.push(equipmentList);
+            query += ` HAVING array_agg(DISTINCT e.name) FILTER (WHERE e.name IS NOT NULL) @> $${params.length}::text[] `;
+        }
+
+        query += ` ORDER BY r.id `;
+
+        const result = await pool.query(query, params);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('searchRooms error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+}
+
+module.exports = { listRooms, createRoom, deleteRoom, listRoomsWithBookings, searchRooms };
