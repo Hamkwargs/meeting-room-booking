@@ -14,14 +14,14 @@ concurrency:
 
 jobs:
   build-and-push:
-    name: Build and Push Docker Images (deploy to dev)
+    name: Build and Push (${{ matrix.component }})
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        component: [backend, frontend]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -32,23 +32,24 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push backend image
+      - name: Build and push ${{ matrix.component }} image
         uses: docker/build-push-action@v5
         with:
-          context: ./backend
+          context: ./${{ matrix.component }}
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/booking-backend:${{ github.sha }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/booking-backend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/booking-${{ matrix.component }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/booking-${{ matrix.component }}:latest
 
-      - name: Build and push frontend image
-        uses: docker/build-push-action@v5
+  update-values:
+    name: Update dev Helm values
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          context: ./frontend
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/booking-frontend:${{ github.sha }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/booking-frontend:latest
+          fetch-depth: 0
 
       - name: Install yq
         run: |
@@ -80,4 +81,3 @@ jobs:
           git commit -m "ci: update dev image tags to ${{ github.sha }} [skip ci]"
           git pull --rebase origin main
           git push origin HEAD:main
-
