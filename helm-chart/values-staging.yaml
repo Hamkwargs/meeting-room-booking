@@ -1,13 +1,12 @@
 replicaCount: 1
-
 image:
-  tag: "v2"
-
+  tag: "6c0c34c07ef493ba4c195a2e38cc6d353727b733"
 ingress:
   host: booking-staging.local
-
 env:
   DB_NAME: "booking_db_staging"
-
 secret:
   JWT_SECRET: "staging-secret-change-me"
+frontend:
+  image:
+    tag: 6c0c34c07ef493ba4c195a2e38cc6d353727b733
