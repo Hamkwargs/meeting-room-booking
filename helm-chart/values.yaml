@@ -1,7 +1,7 @@
 replicaCount: 1
 image:
   repository: hamkwargs/booking-backend
-  tag: "652435fd5ec466f2bc0c343627fbbdbf2e6ab89d"
+  tag: "8d44519313ae63750d8f83fc2e64acb5f79678ce"
   pullPolicy: IfNotPresent
 service:
   type: ClusterIP
@@ -28,7 +28,7 @@ frontend:
   replicaCount: 1
   image:
     repository: hamkwargs/booking-frontend
-    tag: "652435fd5ec466f2bc0c343627fbbdbf2e6ab89d"
+    tag: "8d44519313ae63750d8f83fc2e64acb5f79678ce"
     pullPolicy: IfNotPresent
   service:
     port: 80
